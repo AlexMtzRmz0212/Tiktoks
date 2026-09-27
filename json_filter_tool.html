@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>JSON Category Filter</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e2e2e2;
+    --hover: #f3f4f6;
+    --keep: #16a34a;
+    --remove: #dc2626;
+    --mixed: #d97706;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --fg: #eaeaea;
+      --muted: #9ca3af;
+      --border: #333;
+      --hover: #262626;
+      --keep: #4ade80;
+      --remove: #f87171;
+      --mixed: #fbbf24;
+      --accent: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    margin: 0;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    width: min(1100px, 96vw);
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px 16px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    flex: none;
+  }
+  .toolbar .sep {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border);
+  }
+  #controlsRow, #submitRow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  input[type=file] { color: var(--fg); font-size: 0.85rem; max-width: 220px; }
+  button {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--hover);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status, #result { color: var(--muted); font-size: 0.8rem; }
+  #tree {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 4px;
+    display: none;
+  }
+  ul.tree-list {
+    list-style: none;
+    margin: 0;
+    padding-left: 20px;
+  }
+  ul.tree-list.root { padding-left: 4px; }
+  li.node { margin: 1px 0; }
+  .node-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px;
+    border-radius: 4px;
+    cursor: default;
+    user-select: none;
+  }
+  .node-row:hover { background: var(--hover); }
+  .twisty {
+    width: 16px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--muted);
+    flex: none;
+    font-size: 0.75rem;
+  }
+  .twisty.empty { visibility: hidden; }
+  .mark {
+    width: 20px;
+    flex: none;
+    text-align: center;
+    cursor: pointer;
+    font-weight: bold;
+    border-radius: 4px;
+  }
+  .mark.keep { color: var(--keep); }
+  .mark.remove { color: var(--remove); text-decoration: line-through; }
+  .mark.mixed { color: var(--mixed); }
+  .label { flex: 1; }
+  .meta { color: var(--muted); font-size: 0.82rem; margin-left: 4px; }
+  .children { display: none; }
+  .children.open { display: block; }
+</style>
+</head>
+<body>
+  <div class="panel" title="Load a JSON file, uncheck the categories/lists you want removed, then submit to download the filtered file. Arrays are treated as single checkable items (not expanded record-by-record).">
+    <div class="toolbar">
+      <input type="file" id="fileInput" accept=".json,application/json">
+      <span id="status"></span>
+
+      <span class="sep" id="controlsSep" style="display:none;"></span>
+      <span id="controlsRow" style="display:none;">
+        <button id="expandAllBtn">Expand all</button>
+        <button id="collapseAllBtn">Collapse all</button>
+      </span>
+
+      <span class="sep" id="submitSep" style="display:none;"></span>
+      <span id="submitRow" style="display:none;">
+        <button class="primary" id="submitBtn">Submit &amp; download</button>
+      </span>
+      <span id="result"></span>
+    </div>
+
+    <div id="tree"></div>
+  </div>
+
+<script>
+(function () {
+  const fileInput = document.getElementById('fileInput');
+  const statusEl = document.getElementById('status');
+  const treeEl = document.getElementById('tree');
+  const controlsRow = document.getElementById('controlsRow');
+  const controlsSep = document.getElementById('controlsSep');
+  const submitRow = document.getElementById('submitRow');
+  const submitSep = document.getElementById('submitSep');
+  const submitBtn = document.getElementById('submitBtn');
+  const resultEl = document.getElementById('result');
+  const expandAllBtn = document.getElementById('expandAllBtn');
+  const collapseAllBtn = document.getElementById('collapseAllBtn');
+
+  let originalData = null;
+  let originalFileName = 'data.json';
+  let rootNode = null;
+
+  // ---- Tree model -------------------------------------------------
+
+  function isPlainObject(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+  }
+
+  // A leaf value counts as "empty" (pre-crossed) when it holds nothing
+  // useful: null, an empty string, or an empty object.
+  function isEmptyLeafValue(v) {
+    return v === null || v === '' || (isPlainObject(v) && Object.keys(v).length === 0);
+  }
+
+  // Build a tree node for `value` under `key`. Arrays and non-object
+  // values become leaves; only plain objects recurse into children.
+  // Empty arrays/leaves default unchecked (crossed); non-empty ones
+  // default checked.
+  function buildNode(key, value, path) {
+    const node = {
+      key,
+      path,
+      value,
+      checked: true, // true = keep, false = remove
+      children: null,
+      expanded: path.length < 2, // auto-expand the first couple levels
+    };
+
+    if (isPlainObject(value) && Object.keys(value).length > 0) {
+      node.type = 'object';
+      node.children = Object.keys(value).map((k) =>
+        buildNode(k, value[k], path.concat(k))
+      );
+    } else if (Array.isArray(value)) {
+      node.type = 'array';
+      node.count = value.length;
+      node.checked = value.length > 0;
+    } else {
+      node.type = 'leaf';
+      node.checked = !isEmptyLeafValue(value);
+    }
+    return node;
+  }
+
+  // ---- Rendering ----------------------------------------------------
+
+  function markSymbol(node) {
+    const state = effectiveState(node);
+    if (state === 'checked') return { cls: 'keep', ch: '✓' };
+    if (state === 'unchecked') return { cls: 'remove', ch: '✗' };
+    return { cls: 'mixed', ch: '–' };
+  }
+
+  // 'checked' | 'unchecked' | 'mixed'
+  function effectiveState(node) {
+    if (!node.children) return node.checked ? 'checked' : 'unchecked';
+    let allChecked = true;
+    let allUnchecked = true;
+    for (const child of node.children) {
+      const s = effectiveState(child);
+      if (s !== 'checked') allChecked = false;
+      if (s !== 'unchecked') allUnchecked = false;
+    }
+    if (allChecked) return 'checked';
+    if (allUnchecked) return 'unchecked';
+    return 'mixed';
+  }
+
+  function setCheckedRecursive(node, checked) {
+    node.checked = checked;
+    if (node.children) {
+      node.children.forEach((c) => setCheckedRecursive(c, checked));
+    }
+  }
+
+  function describeMeta(node) {
+    if (node.type === 'array') return `(${node.count} item${node.count === 1 ? '' : 's'})`;
+    if (node.type === 'object') return `(${node.children.length} field${node.children.length === 1 ? '' : 's'})`;
+    if (node.value === null) return '(empty)';
+    if (isPlainObject(node.value)) return '(empty)';
+    return '';
+  }
+
+  function renderTree() {
+    treeEl.innerHTML = '';
+    const rootUl = document.createElement('ul');
+    rootUl.className = 'tree-list root';
+    rootUl.appendChild(renderNode(rootNode));
+    treeEl.appendChild(rootUl);
+  }
+
+  function renderNode(node) {
+    const li = document.createElement('li');
+    li.className = 'node';
+
+    const row = document.createElement('div');
+    row.className = 'node-row';
+
+    const twisty = document.createElement('span');
+    twisty.className = 'twisty' + (node.children ? '' : ' empty');
+    twisty.textContent = node.children ? (node.expanded ? '▾' : '▸') : '';
+    twisty.onclick = () => {
+      node.expanded = !node.expanded;
+      renderTree();
+    };
+
+    const mark = document.createElement('span');
+    const sym = markSymbol(node);
+    mark.className = 'mark ' + sym.cls;
+    mark.textContent = sym.ch;
+    mark.title = 'Click to toggle keep/remove';
+    mark.onclick = () => {
+      const newChecked = effectiveState(node) !== 'checked';
+      setCheckedRecursive(node, newChecked);
+      renderTree();
+    };
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = node.key;
+
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = describeMeta(node);
+
+    row.appendChild(twisty);
+    row.appendChild(mark);
+    row.appendChild(label);
+    row.appendChild(meta);
+    li.appendChild(row);
+
+    if (node.children) {
+      const childUl = document.createElement('ul');
+      childUl.className = 'tree-list children' + (node.expanded ? ' open' : '');
+      node.children.forEach((c) => childUl.appendChild(renderNode(c)));
+      li.appendChild(childUl);
+    }
+
+    return li;
+  }
+
+  function setAllExpanded(node, expanded) {
+    if (node.children) {
+      node.expanded = expanded;
+      node.children.forEach((c) => setAllExpanded(c, expanded));
+    }
+  }
+
+  // ---- Filtering / export -------------------------------------------
+
+  function buildFiltered(node) {
+    const state = effectiveState(node);
+    if (state === 'unchecked') return { keep: false };
+
+    if (node.type === 'array' || node.type === 'leaf') {
+      return { keep: true, value: node.value };
+    }
+
+    // object, mixed or fully checked: rebuild from kept children
+    const out = {};
+    for (const child of node.children) {
+      const res = buildFiltered(child);
+      if (res.keep) out[child.key] = res.value;
+    }
+    return { keep: true, value: out };
+  }
+
+  function downloadJson(obj, filename) {
+    const text = JSON.stringify(obj, null, 2);
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return text.length;
+  }
+
+  // ---- Wiring ---------------------------------------------------------
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    originalFileName = file.name || 'data.json';
+    statusEl.textContent = 'Reading ' + file.name + ' (' + (file.size / 1e6).toFixed(1) + ' MB)...';
+    resultEl.textContent = '';
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        originalData = JSON.parse(reader.result);
+      } catch (err) {
+        statusEl.textContent = 'Failed to parse JSON: ' + err.message;
+        return;
+      }
+      rootNode = buildNode(file.name, originalData, []);
+      rootNode.expanded = true;
+      renderTree();
+      treeEl.style.display = 'block';
+      controlsRow.style.display = 'inline-flex';
+      controlsSep.style.display = 'block';
+      submitRow.style.display = 'inline-flex';
+      submitSep.style.display = 'block';
+      statusEl.textContent = 'Loaded ' + file.name + '.';
+    };
+    reader.onerror = () => {
+      statusEl.textContent = 'Failed to read file.';
+    };
+    reader.readAsText(file);
+  });
+
+  expandAllBtn.onclick = () => {
+    setAllExpanded(rootNode, true);
+    renderTree();
+  };
+  collapseAllBtn.onclick = () => {
+    setAllExpanded(rootNode, false);
+    renderTree();
+  };
+
+  submitBtn.onclick = () => {
+    if (!rootNode) return;
+    const res = buildFiltered(rootNode);
+    const filtered = res.keep ? res.value : {};
+    const outName = 'filtered_' + originalFileName;
+    const size = downloadJson(filtered, outName);
+    resultEl.textContent = 'Downloaded ' + outName + ' (' + (size / 1e6).toFixed(2) + ' MB).';
+  };
+})();
+</script>
+</body>
+</html>
