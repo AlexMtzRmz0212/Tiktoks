@@ -1,0 +1,17 @@
+# Optional local Postgres with pgvector, for development.
+#   POSTGRES_PASSWORD=... docker compose up -d
+# then in .env:  DATABASE_URL=postgresql://tiktok:<password>@localhost:5432/tiktok_archive
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: tiktok
+      POSTGRES_DB: tiktok_archive
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
