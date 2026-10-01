@@ -10,8 +10,8 @@ from psycopg.rows import dict_row
 from .config import get_settings
 
 EXPORT_COLUMNS = """
-    video_id, username, canonical_url, date_saved, status, title, summary, key_points,
-    categories, tags, transcript_source
+    video_id, username, canonical_url, date_saved, status, title, caption, hashtags,
+    transcript, categories, tags, transcript_source
 """
 
 
@@ -71,7 +71,6 @@ def fetch_reprocess_ids(
     conn: psycopg.Connection,
     ids: Sequence[str] | None = None,
     category: str | None = None,
-    analyzed_with: str | None = None,
     limit: int | None = None,
 ) -> list[str]:
     """Already-processed videos matching the filters, for re-running Stage 3."""
@@ -83,9 +82,6 @@ def fetch_reprocess_ids(
     if category:
         where.append("%s = ANY(categories)")
         params.append(category)
-    if analyzed_with:
-        where.append("analysis_model = %s")
-        params.append(analyzed_with)
     params.append(limit)
     cur = conn.execute(
         f"SELECT video_id FROM videos WHERE {' AND '.join(where)} "
@@ -100,18 +96,6 @@ def get_video(conn: psycopg.Connection, video_id: str) -> dict:
     if row is None:
         raise KeyError(f"video {video_id} is not in the database")
     return row
-
-
-def top_tags(conn: psycopg.Connection, n: int = 150) -> list[str]:
-    """Most-used tags so far, handed to Claude so it reuses them instead of inventing synonyms."""
-    cur = conn.execute(
-        """
-        SELECT tag FROM videos, unnest(tags) AS tag
-        GROUP BY tag ORDER BY count(*) DESC, tag LIMIT %s
-        """,
-        (n,),
-    )
-    return [r["tag"] for r in cur.fetchall()]
 
 
 # --- writes from the pipeline --------------------------------------------------
@@ -144,25 +128,21 @@ def save_transcription(conn: psycopg.Connection, video_id: str, t) -> None:
     )
 
 
-def save_analysis(
+def save_classification(
     conn: psycopg.Connection,
     video_id: str,
-    notes,
     *,
-    model: str,
-    used_keyframes: bool,
+    title: str | None,
+    categories: Sequence[str],
+    tags: Sequence[str],
     embedding,
 ) -> None:
     conn.execute(
         """
         UPDATE videos SET
             title = %(title)s,
-            summary = %(summary)s,
-            key_points = %(key_points)s,
             categories = %(categories)s,
             tags = %(tags)s,
-            used_keyframes = %(used_keyframes)s,
-            analysis_model = %(model)s,
             embedding = %(embedding)s,
             processed_at = now(),
             processing_state = 'done',
@@ -171,13 +151,9 @@ def save_analysis(
         """,
         {
             "video_id": video_id,
-            "title": notes.title,
-            "summary": notes.summary,
-            "key_points": list(notes.key_points),
-            "categories": list(notes.categories),
-            "tags": list(notes.tags),
-            "used_keyframes": used_keyframes,
-            "model": model,
+            "title": title,
+            "categories": list(categories),
+            "tags": list(tags),
             "embedding": embedding,
         },
     )

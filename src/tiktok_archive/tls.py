@@ -2,8 +2,7 @@
 
 On machines where antivirus or a proxy inspects HTTPS, the inspecting root
 certificate lives only in the Windows certificate store, so certifi-based
-verification fails everywhere (yt-dlp, the Anthropic SDK, Hugging Face
-downloads). This keeps verification on and just trusts what Windows trusts:
+verification fails everywhere (yt-dlp, Hugging Face downloads). This keeps verification on and just trusts what Windows trusts:
 
 - Python's ssl module (requests, httpx, urllib) goes through truststore.
 - libcurl (curl_cffi, which yt-dlp uses to impersonate a browser for TikTok)

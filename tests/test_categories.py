@@ -1,6 +1,6 @@
 import re
 
-from tiktok_archive.categories import CATEGORY_NAMES, VISUAL_CATEGORIES
+from tiktok_archive.categories import CATEGORY_NAMES
 from tiktok_archive.config import MIGRATIONS_DIR
 
 
@@ -16,4 +16,3 @@ def test_db_check_constraint_matches_categories_py():
 
 def test_closed_set_is_the_agreed_32():
     assert len(CATEGORY_NAMES) == 32 == len(set(CATEGORY_NAMES))
-    assert VISUAL_CATEGORIES <= set(CATEGORY_NAMES)

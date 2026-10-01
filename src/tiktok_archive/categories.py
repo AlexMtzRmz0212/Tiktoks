@@ -1,9 +1,10 @@
 """The closed category set.
 
-Claude may only pick from these names, and migrations/001_init.sql enforces the
-same list with a CHECK constraint. The one-line definitions go into the Stage 3
-prompt verbatim, so they directly shape classification. Edit them to match what
-each old folder actually meant to you.
+Videos can only be filed under these names, and migrations/001_init.sql enforces
+the same list with a CHECK constraint. Each "name: definition" is embedded by the
+local model (classify.py) and compared with the video's text, so the wording
+directly shapes classification. Edit the definitions to match what each old
+folder actually meant to you, then re-run with --reprocess.
 
 Renaming or adding a category needs a new migration that updates the
 videos_categories_check constraint as well as this file.
@@ -45,15 +46,3 @@ CATEGORIES: dict[str, str] = {
 }
 
 CATEGORY_NAMES: tuple[str, ...] = tuple(CATEGORIES)
-
-# Categories where what's on screen matters more than what's said. Videos that
-# land here get a pass with keyframes (see understand.py).
-VISUAL_CATEGORIES: frozenset[str] = frozenset({"3D", "Piano", "Gadgets"})
-
-# Caption/hashtag words that suggest a visual video, so keyframes are sent on
-# the first Claude call instead of needing a second one.
-VISUAL_KEYWORDS: tuple[str, ...] = (
-    "piano", "pianist", "keyboard", "chords",
-    "3d", "blender", "cad", "fusion360", "3dprint", "3dprinting", "render", "modeling", "sculpt",
-    "gadget", "gadgets", "unboxing", "techreview", "setup", "desksetup",
-)

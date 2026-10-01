@@ -1,4 +1,4 @@
-"""Stage 5, read side: semantic search over summaries, with category/status/tag filters.
+"""Stage 5, read side: semantic search over captions and transcripts, with category/status/tag filters.
 
 Usage:
     python -m tiktok_archive.search "how to negotiate a raise"

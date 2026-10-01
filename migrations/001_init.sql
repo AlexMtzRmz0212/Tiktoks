@@ -32,10 +32,8 @@ CREATE TABLE videos (
                       CHECK (transcript_source IN ('captions', 'whisper', 'none')),
     language          TEXT,
 
-    -- Stage 3: from Claude
-    title             TEXT,
-    summary           TEXT,
-    key_points        TEXT[],
+    -- Stage 3: computed locally (classify.py)
+    title             TEXT,                       -- first line of the caption
     categories        TEXT[]                      -- multi-label, most relevant first
                       CONSTRAINT videos_categories_check CHECK (
                           cardinality(categories) >= 1
@@ -48,12 +46,10 @@ CREATE TABLE videos (
                               'Remote Jobs', 'Hobbies', 'Excel', 'Projects'
                           ]::TEXT[]
                       ),
-    tags              TEXT[] NOT NULL DEFAULT '{}',  -- Claude's topic tags, lowercase kebab-case
-    used_keyframes    BOOLEAN NOT NULL DEFAULT FALSE,
-    analysis_model    TEXT,
+    tags              TEXT[] NOT NULL DEFAULT '{}',  -- the post's hashtags, lowercase kebab-case
     processed_at      TIMESTAMPTZ,
 
-    -- Stage 5: BAAI/bge-m3 over summary + key points
+    -- Stage 5: BAAI/bge-m3 over caption + hashtags + start of the transcript
     embedding         VECTOR(1024),
 
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

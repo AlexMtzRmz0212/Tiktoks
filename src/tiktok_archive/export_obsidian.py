@@ -76,14 +76,13 @@ def render_note(row: dict) -> str:
             f"[Open on TikTok]({row['canonical_url']})",
         ) if part
     )
-    key_points = "\n".join(f"- {k}" for k in row.get("key_points") or [])
+    transcript = (row.get("transcript") or "").strip()
     body = [
         f"# {title}",
         byline,
-        "## Summary",
-        (row.get("summary") or "").strip(),
-        "## Key points",
-        key_points,
+        (row.get("caption") or "").strip(),
+        "## Transcript" if transcript else "",
+        transcript,
     ]
     return f"---\n{fm}---\n\n" + "\n\n".join(part for part in body if part) + "\n"
 

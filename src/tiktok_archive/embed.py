@@ -1,6 +1,7 @@
-"""Stage 5: local embeddings with sentence-transformers (BAAI/bge-m3 by default, 1024-d, multilingual).
+"""Local embeddings with sentence-transformers (BAAI/bge-m3 by default, 1024-d, multilingual).
 
-The model downloads to the Hugging Face cache on first use (about 2.3 GB).
+Used for semantic search and for categorising videos (classify.py). The model
+downloads to the Hugging Face cache on first use (about 2.3 GB).
 """
 
 import threading
@@ -27,12 +28,6 @@ def _get_model():
                 "Pick a matching model or add a migration that changes the column."
             )
     return _model
-
-
-def notes_text(title: str | None, summary: str, key_points: list[str]) -> str:
-    """What gets embedded for a video: the summary plus its key points."""
-    lines = [title or "", summary, *key_points]
-    return "\n".join(line for line in lines if line)
 
 
 def embed(texts: list[str]) -> list[np.ndarray]:

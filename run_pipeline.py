@@ -4,7 +4,7 @@
 1. Apply pending database migrations (additive only).
 2. Load rows from favorites.csv that aren't in Postgres yet.
 3. Process the work queue (new videos, plus earlier failures that still have retries left):
-   transcribe -> Claude notes -> store -> embed.
+   transcribe -> classify locally -> store -> embed.
 4. Export notes for the videos processed in this run to the vault.
 
 Safe to stop with Ctrl+C and re-run: finished videos are never redone.
@@ -13,7 +13,7 @@ Usage:
     python run_pipeline.py --limit 20            # try a small sample first
     python run_pipeline.py                        # everything that's left
     python run_pipeline.py --only-export          # rebuild/refresh all notes, no processing
-    python run_pipeline.py --reprocess --category Coding --model claude-opus-5
+    python run_pipeline.py --reprocess --category Coding
 """
 
 import argparse

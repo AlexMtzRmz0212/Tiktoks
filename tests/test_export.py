@@ -13,8 +13,8 @@ def make_row(**overrides) -> dict:
         "date_saved": datetime(2026, 9, 21, 19, 10, 8),
         "status": "unprocessed",
         "title": "Three Excel tricks: XLOOKUP & more",
-        "summary": "A quick tour of three formulas.",
-        "key_points": ["Use XLOOKUP", "Use LET"],
+        "caption": "Three Excel tricks: XLOOKUP & more #excel #formulas",
+        "transcript": "Today I'll show you XLOOKUP and LET.",
         "categories": ["Excel", "Life Hacks"],
         "tags": ["excel", "formulas"],
         "transcript_source": "captions",
@@ -39,12 +39,16 @@ def test_frontmatter_round_trips_and_keeps_types_dataview_friendly():
     assert fm["aliases"] == ["Three Excel tricks: XLOOKUP & more"]
 
 
-def test_body_has_summary_and_key_points():
+def test_body_has_caption_and_transcript():
     text = render_note(make_row())
     assert "# Three Excel tricks: XLOOKUP & more" in text
     assert "@someone · saved 2026-09-21 · [Open on TikTok](" in text
-    assert "## Summary\n\nA quick tour of three formulas." in text
-    assert "## Key points\n\n- Use XLOOKUP\n- Use LET" in text
+    assert "#excel #formulas\n\n## Transcript\n\nToday I'll show you XLOOKUP and LET." in text
+
+
+def test_body_without_transcript_has_no_empty_section():
+    text = render_note(make_row(transcript=None))
+    assert "## Transcript" not in text
 
 
 def test_folder_name_is_filesystem_safe():

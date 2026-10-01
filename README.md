@@ -5,13 +5,15 @@ Turns ~5,600 saved TikToks into a searchable, categorised notes archive:
 ```
 TikTok export ──Stage 1──▶ favorites.csv ──▶ Postgres (source of truth) ──Stage 6──▶ Obsidian vault (read-only view)
                                               ▲   Stage 2: transcript (captions / local whisper)
-                                              │   Stage 3: Claude → title, summary, key points, categories, tags
+                                              │   Stage 3: local → title (caption), tags (hashtags), categories (bge-m3 vs. category definitions)
                                               │   Stage 4: stored in `videos`
                                               └── Stage 5: pgvector embedding for semantic search
 ```
 
+Everything runs locally and costs nothing: no paid API is called. An earlier version used Claude for Stage 3 (title, summary, key points, categories); it's in git history at commit `3187710` if you want it back.
+
 - **Postgres is the single source of truth.** The vault is generated from it, one way only. Nothing reads the vault back, so edits made in Obsidian are overwritten on the next export.
-- **Categories are a closed set of 32** (`src/tiktok_archive/categories.py`), enforced by the Claude output schema *and* a database CHECK constraint. A video can have 1–3 categories; the first one is its primary category and decides its vault folder.
+- **Categories are a closed set of 32** (`src/tiktok_archive/categories.py`), enforced by the classifier *and* a database CHECK constraint. A video can have 1–3 categories; the first one is its primary category and decides its vault folder.
 - **`status` is your own review flag** (`unprocessed` / `noted`). The pipeline never changes it; you do, with `tiktok_archive.mark`. Pipeline progress lives in a separate `processing_state` column.
 
 ## Layout
@@ -23,22 +25,22 @@ src/tiktok_archive/
   parse_tiktok_export.py     Stage 1: export JSON → favorites.csv
   loader.py                  favorites.csv → videos (new rows only)
   transcribe.py              Stage 2: yt-dlp + captions / faster-whisper
-  understand.py              Stage 3: Claude (+ ffmpeg keyframes for visual videos)
-  embed.py                   Stage 5: local BAAI/bge-m3 embeddings
+  classify.py                Stage 3: title, tags and categories, computed locally
+  embed.py                   Stages 3 + 5: local BAAI/bge-m3 embeddings
   process.py                 Stages 2–5 per video, and the parallel work queue
   export_obsidian.py         Stage 6: Postgres → vault
   search.py                  semantic search with category/status/tag filters
   mark.py                    set status noted/unprocessed, re-export those notes
   migrate.py                 applies migrations/*.sql, tracked in schema_migrations
-  categories.py              the closed category set + definitions used in the prompt
+  categories.py              the closed category set + definitions the classifier compares against
   config.py                  settings from .env
   tls.py                     HTTPS verification against the OS certificate store
-tests/                       pytest (no database or API key needed)
+tests/                       pytest (no database needed)
 ```
 
 ## Setup
 
-Python 3.11+ and ffmpeg on `PATH` (for keyframes).
+Python 3.11+.
 
 ```bash
 python -m venv .venv
@@ -59,7 +61,7 @@ Install PyTorch first. The CPU build is enough, because embeddings run on CPU by
 - A hosted Postgres that ships pgvector (Supabase, Neon, and others). This is also the easiest route once this gets deployed.
 - A native install. On Windows, pgvector has to be compiled or installed separately.
 
-**Configuration.** Copy `.env.example` to `.env` and fill in `DATABASE_URL`, `ANTHROPIC_API_KEY` and `VAULT_PATH`. `.env` is gitignored.
+**Configuration.** Copy `.env.example` to `.env` and fill in `DATABASE_URL` and `VAULT_PATH`. `.env` is gitignored.
 
 **GPU whisper (optional).** faster-whisper uses CUDA 12 + cuDNN 9 when they are available (`WHISPER_DEVICE=auto`), and falls back to CPU otherwise. `large-v3-turbo` in `int8_float16` fits a 4 GB card.
 
@@ -81,20 +83,19 @@ This resolves every share link to its canonical URL. It is resume-safe, and it o
 2. Loads new rows from `favorites.csv`.
 3. Processes the queue, newest saves first: new videos plus earlier failures that still have retries left.
 4. Exports notes for just the videos it processed.
-5. Prints counts, token usage and an estimated cost.
+5. Prints counts of what was processed and which transcript sources were used.
 
 Useful flags:
 
 | Flag | Effect |
 |---|---|
 | `--limit N` | process at most N videos |
-| `--workers N` | videos in flight (default 4); downloads and Claude calls overlap, whisper runs one at a time |
+| `--workers N` | videos in flight (default 4); downloads and classification overlap, whisper runs one at a time |
 | `--ids ID ...` | only these videos |
-| `--model M` | Claude model for this run |
-| `--reprocess` + `--ids` / `--category` / `--analyzed-with` / `--limit` | redo Stage 3 on finished videos, reusing stored transcripts (e.g. after changing model or category definitions) |
+| `--reprocess` + `--ids` / `--category` / `--limit` | redo Stage 3 and the embedding on finished videos, reusing stored transcripts (e.g. after changing category definitions) |
 | `--only-export` | no processing; refresh every note in the vault |
 | `--no-export` | process only |
-| `--keep-media` | keep downloaded videos in `MEDIA_DIR` |
+| `--keep-media` | don't delete the (rarely downloaded) videos from `MEDIA_DIR` after each job |
 
 ### Stages individually
 ```bash
@@ -117,17 +118,17 @@ Useful flags:
 .venv/Scripts/python -m tiktok_archive.search "quick dinner" --category Food --status unprocessed -k 20
 .venv/Scripts/python -m tiktok_archive.search "automation" --tag python --since 2025-01-01
 ```
-Search embeds the query with the same local model and ranks by cosine similarity over `summary + key points`, after applying the filters. The scan is exact; add the commented-out HNSW index in the migration once the table passes roughly 50k rows.
+Search embeds the query with the same local model and ranks by cosine similarity over each video's caption, hashtags and the start of its transcript, after applying the filters. The scan is exact; add the commented-out HNSW index in the migration once the table passes roughly 50k rows.
 
 ## How processing behaves
 
-- **States.** A video moves `pending` → `transcribed` → `done`. Errors set `failed` and are retried on later runs until `MAX_ATTEMPTS` (3). Deleted or private posts become `unavailable` and are never retried. The transcript is saved before Claude runs, so a failed Claude call never costs another download or whisper pass. To check on things:
+- **States.** A video moves `pending` → `transcribed` → `done`. Errors set `failed` and are retried on later runs until `MAX_ATTEMPTS` (3). Deleted or private posts become `unavailable` and are never retried. The transcript is saved before classification runs, so a failure there never costs another download or whisper pass. To check on things:
   `SELECT processing_state, count(*) FROM videos GROUP BY 1;` and `SELECT video_id, last_error FROM videos WHERE processing_state = 'failed';`
-- **Transcripts.** TikTok's own captions are used when the post has them (track preference is set by `CAPTION_LANGS`); many posts do. Otherwise local faster-whisper transcribes the audio, with voice-activity detection so music isn't turned into invented words. On an RTX 3050, an 80-second video takes about 10 seconds. `transcript_source` is `captions`, `whisper` or `none` (no speech).
-- **Images.** For 3D, Piano and Gadgets the picture matters more than the audio. The category isn't known until Claude answers, so images go on the first call only when the post looks visual: under 25 words of speech, or visual keywords in the caption or hashtags. Otherwise a second call with images runs only if Claude picks one of those three categories. For a normal video, the images are 4 ffmpeg keyframes. **Photo-mode (slideshow) posts** download as just their music, and their content is usually the text on the slides, so their slides are sent instead (up to 6). `used_keyframes` records whether images were sent.
+- **Transcripts.** TikTok's own captions are used when the post has them (track preference is set by `CAPTION_LANGS`); many posts do, and for those **no video is downloaded**, only metadata and the caption file. Otherwise the video is downloaded to `MEDIA_DIR/<video_id>/`, local faster-whisper transcribes the audio, and the folder is deleted as soon as that video's job ends (so at most `--workers` videos are on disk at once, 4 by default), with voice-activity detection so music isn't turned into invented words. On an RTX 3050, an 80-second video takes about 10 seconds. `transcript_source` is `captions`, `whisper` or `none` (no speech).
+- **Categories.** The video's caption, hashtags and the first ~2,000 characters of its transcript are embedded once with bge-m3. That vector is compared with the embedding of each category's `name: definition` from `categories.py`. The best match is the primary category (it decides the vault folder); up to two more are added only when they score within 0.03 of the best and at least 0.30 (`EXTRA_MARGIN` / `EXTRA_FLOOR` in `classify.py`). The same vector is stored for search, so classification adds no extra model pass. It looks at text only: a video with no speech and a bare caption (a silent piano clip, a photo slideshow whose content is text on the slides) gets a weak guess. Nothing looks at images or frames.
 - **Unavailable posts.** A deleted or private post becomes `unavailable`. TikTok's status 10204, which yt-dlp reports as "Your IP address is blocked from accessing this post", shows up for individual removed or region-locked posts. It isn't a sign your IP is blocked, so it's treated as an ordinary failure and retried up to `MAX_ATTEMPTS`.
-- **Tags.** Claude sees the ~150 most-used tags so far and is asked to reuse them. Tags are normalised to lowercase kebab-case so they work as Obsidian tags.
-- **Cost.** Each video goes to Claude once (twice for some visual videos). With `claude-sonnet-5` at `ANTHROPIC_EFFORT=low`, the one-time backfill is roughly $50–65 and each new save afterwards about $0.01. Re-runs cost nothing unless you use `--reprocess`. The run summary prints the actual token usage.
+- **Titles and tags.** The title is the first line of the caption without hashtags (cut at 80 characters); a post with no caption text is titled `TikTok <video_id>` in the vault. Tags are the post's own hashtags, normalised to lowercase kebab-case so they work as Obsidian tags (max 8).
+- **Cost.** None: yt-dlp, faster-whisper and bge-m3 all run on your machine, and no API key is needed.
 - **Time.** Downloading and transcription dominate, so the full backfill takes hours. Chunk it with `--limit`, or just let it run and resume.
 
 ## The vault
@@ -155,10 +156,9 @@ transcript_source: captions
 ---
 # Three Excel tricks for lookups
 @someone · saved 2026-09-21 · [Open on TikTok](…)
-## Summary
-…
-## Key points
-- …
+Three Excel tricks for lookups #excel #xlookup
+## Transcript
+Today I'll show you…
 ```
 
 Re-exporting updates notes in place. When a video's primary category changes, its note moves to the new folder. Files are only rewritten when their content changes. Only `<video_id>.md` files for videos in the database are ever touched, so your own notes in the same vault are safe. `aliases` lets Obsidian's quick switcher find notes by title.
@@ -188,9 +188,8 @@ SORT length(rows) DESC
 
 ## Changing things later
 
-- **Model**: set `ANTHROPIC_MODEL` (every row records `analysis_model`). To redo existing notes with the new model:
-  `run_pipeline.py --reprocess --analyzed-with claude-sonnet-5 --limit 50`
-- **Category definitions**: edit the descriptions in `categories.py`. They go into the prompt verbatim. Then `--reprocess` whichever videos you want re-judged.
+- **Category definitions**: edit the descriptions in `categories.py`. They are embedded and compared with each video, so the wording directly shapes the result; keep each one about what the videos *say*, and avoid words that overlap with another category (for example "coding projects" under Projects pulls programming videos away from Coding). Then `run_pipeline.py --reprocess --category <name>` (or `--limit N`) re-judges the videos you want, for free.
+- **Adding AI again**: Stage 3 is the only place a paid model was involved. `process_video` in `process.py` is where it plugs in (see commit `3187710` for the Claude version, which also produced summaries and key points).
 - **Category names** (adding, renaming or removing one): update `categories.py` *and* add a migration that replaces the `videos_categories_check` constraint. `tests/test_categories.py` fails if the two drift apart.
 - **Embedding model**: must produce 1024-d vectors, or add a migration that changes the `embedding` column and re-embeds.
 
@@ -214,4 +213,4 @@ Deployment notes for later: all configuration is environment variables, the data
 ```bash
 .venv/Scripts/python -m pytest
 ```
-These cover subtitle parsing, caption track choice, CSV loading, the export parser's two JSON layouts, the category list matching the database constraint, tag normalisation, the output schema's category enum, note rendering and YAML round-tripping, and vault upsert/move behaviour. None of them need a database or an API key.
+These cover subtitle parsing, caption track choice, CSV loading, the export parser's two JSON layouts, the category list matching the database constraint, title and tag helpers, the category-picking rules, note rendering and YAML round-tripping, and vault upsert/move behaviour. None of them need a database or a model download.

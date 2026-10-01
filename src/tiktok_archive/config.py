@@ -32,9 +32,6 @@ class Settings:
     favorites_csv: Path
     vault_path: Path
     media_dir: Path
-    anthropic_model: str
-    anthropic_effort: str
-    notes_language: str
     caption_langs: tuple[str, ...]
     whisper_model: str
     whisper_device: str
@@ -52,9 +49,6 @@ def get_settings() -> Settings:
         favorites_csv=_path("FAVORITES_CSV", "data/favorites.csv"),
         vault_path=_path("VAULT_PATH", "vault"),
         media_dir=_path("MEDIA_DIR", "data/media"),
-        anthropic_model=_env("ANTHROPIC_MODEL", "claude-sonnet-5"),
-        anthropic_effort=_env("ANTHROPIC_EFFORT", "low"),
-        notes_language=_env("NOTES_LANGUAGE", "English"),
         caption_langs=tuple(
             lang.strip().lower() for lang in _env("CAPTION_LANGS", "eng,en,spa,es").split(",") if lang.strip()
         ),

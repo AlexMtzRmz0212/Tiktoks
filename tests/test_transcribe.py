@@ -1,4 +1,6 @@
-from tiktok_archive.transcribe import UNAVAILABLE_RE, pick_caption_track, subtitles_to_text
+from pathlib import Path
+
+from tiktok_archive.transcribe import UNAVAILABLE_RE, _ydl_opts, pick_caption_track, subtitles_to_text
 
 VTT = """WEBVTT
 Kind: captions
@@ -52,3 +54,8 @@ def test_pick_caption_track_falls_back_and_ignores_missing_files():
 def test_unavailable_detection():
     assert UNAVAILABLE_RE.search("ERROR: [TikTok] 123: Video not available, status code 10204")
     assert not UNAVAILABLE_RE.search("ERROR: Unable to download webpage: HTTP Error 429")
+
+
+def test_video_is_only_downloaded_when_asked_for():
+    assert _ydl_opts(Path("w"), subtitles=True, media=False)["skip_download"] is True
+    assert _ydl_opts(Path("w"), subtitles=False, media=True)["skip_download"] is False

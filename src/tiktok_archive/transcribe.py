@@ -1,7 +1,9 @@
-"""Stage 2: download a TikTok with yt-dlp and get its transcript.
+"""Stage 2: get a TikTok's transcript with yt-dlp.
 
-Built-in captions are used when the video has them. Otherwise the audio goes
-through local faster-whisper. Only one whisper job runs at a time, so parallel
+Built-in captions are used when the post has them, and then nothing but metadata
+and the caption file is fetched. Only when there are no captions is the video
+downloaded (for the audio, which goes through local faster-whisper); the caller
+deletes it as soon as that video's job ends. Only one whisper job runs at a time, so parallel
 workers can download while the GPU is busy.
 
 Usage (smoke test, no database needed):
@@ -13,7 +15,6 @@ import html
 import logging
 import re
 import shutil
-import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,8 +26,7 @@ from .config import get_settings, utf8_console
 
 log = logging.getLogger(__name__)
 
-MEDIA_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".m4a", ".mp3"}
-AUDIO_EXTS = {".m4a", ".mp3"}  # what photo-mode (slideshow) posts download as
+MEDIA_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".m4a", ".mp3"}  # photo-mode posts download as just their music
 
 # yt-dlp error text for posts that are gone or private (these are never retried).
 UNAVAILABLE_RE = re.compile(
@@ -101,12 +101,13 @@ def _caption_text(info: dict) -> tuple[str, str | None]:
 
 # --- download -------------------------------------------------------------------
 
-def _ydl_opts(workdir: Path, *, subtitles: bool) -> dict:
+def _ydl_opts(workdir: Path, *, subtitles: bool, media: bool) -> dict:
     s = get_settings()
     opts = {
         "outtmpl": str(workdir / "%(id)s.%(ext)s"),
-        # A single file with both audio (for whisper) and video (for keyframes).
+        # A single file that has the audio track (for whisper).
         "format": "best[height<=720]/best",
+        "skip_download": not media,  # metadata and subtitle files only
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -130,64 +131,31 @@ def _find_media(workdir: Path) -> Path | None:
     return max(files, key=lambda p: p.stat().st_size) if files else None
 
 
-def download(url: str, workdir: Path, *, subtitles: bool = True) -> tuple[dict, Path]:
-    """Download the video (and optionally every subtitle track) into workdir."""
+def fetch(url: str, workdir: Path, *, subtitles: bool = True, media: bool = True) -> tuple[dict, Path | None]:
+    """Get a post's metadata, optionally with every subtitle track and/or the video file, into workdir.
+
+    With media=False no video is downloaded and the returned path is None.
+    """
     workdir.mkdir(parents=True, exist_ok=True)
     try:
-        with yt_dlp.YoutubeDL(_ydl_opts(workdir, subtitles=subtitles)) as ydl:
+        with yt_dlp.YoutubeDL(_ydl_opts(workdir, subtitles=subtitles, media=media)) as ydl:
             info = ydl.extract_info(url, download=True)
     except DownloadError as e:
         msg = str(e)
         if subtitles and "subtitle" in msg.lower():
             # A broken subtitle track shouldn't cost us the video; whisper can cover it.
             log.warning("subtitle download failed, retrying without subtitles: %s", msg)
-            return download(url, workdir, subtitles=False)
+            return fetch(url, workdir, subtitles=False, media=media)
         if UNAVAILABLE_RE.search(msg):
             raise VideoUnavailable(msg) from e
         raise
+    if not media:
+        return info, None
     downloads = info.get("requested_downloads") or []
     path = Path(downloads[0]["filepath"]) if downloads and downloads[0].get("filepath") else _find_media(workdir)
     if path is None or not path.exists():
         raise RuntimeError(f"yt-dlp reported success but no media file is in {workdir}")
     return info, path
-
-
-def ensure_video(url: str, workdir: Path) -> Path:
-    """The downloaded video, fetching it again if it was already cleaned up."""
-    existing = _find_media(workdir) if workdir.exists() else None
-    return existing or download(url, workdir, subtitles=False)[1]
-
-
-def slideshow_images(video_id: str, out_dir: Path, max_images: int = 6, width: int = 768) -> list[Path]:
-    """Slides of a photo-mode post, as JPEGs. yt-dlp only downloads such posts' music track.
-
-    This goes through a private yt-dlp method, so any failure just means no slides.
-    """
-    try:
-        with yt_dlp.YoutubeDL(_ydl_opts(out_dir, subtitles=False)) as ydl:
-            ie = ydl.get_info_extractor("TikTok")
-            data, _status = ie._extract_web_data_and_status(ie._create_url(None, video_id), video_id)
-            images = ((data or {}).get("imagePost") or {}).get("images") or []
-            out_dir.mkdir(parents=True, exist_ok=True)
-            slides = []
-            for i, image in enumerate(images[:max_images]):
-                urls = (image.get("imageURL") or {}).get("urlList") or []
-                if not urls:
-                    continue
-                raw = out_dir / f"slide_{i}.src"
-                raw.write_bytes(ydl.urlopen(urls[0]).read())
-                jpg = out_dir / f"slide_{i}.jpg"
-                # Slides often carry the content as text, so they stay larger than video keyframes.
-                subprocess.run(
-                    ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-vf", f"scale='min({width},iw)':-2", "-q:v", "3", str(jpg)],
-                    check=False, capture_output=True, timeout=60,
-                )
-                if jpg.exists() and jpg.stat().st_size > 0:
-                    slides.append(jpg)
-            return slides
-    except Exception as e:
-        log.warning("%s: could not fetch slideshow images: %s", video_id, e)
-        return []
 
 
 # --- whisper --------------------------------------------------------------------
@@ -246,7 +214,11 @@ def _run_whisper(path: Path) -> tuple[str, str | None]:
 # --- Stage 2 entry point -------------------------------------------------------
 
 def transcribe_video(url: str, workdir: Path) -> Transcription:
-    info, video_path = download(url, workdir)
+    """Captions when the post has them (no video downloaded); otherwise download it for whisper.
+
+    The caller deletes workdir when it's done, so a downloaded video never outlives its job.
+    """
+    info, _ = fetch(url, workdir, media=False)
 
     description = (info.get("description") or "").strip() or None
     hashtags = list(dict.fromkeys(
@@ -255,10 +227,12 @@ def transcribe_video(url: str, workdir: Path) -> Transcription:
     ))
     duration = info.get("duration")
 
+    video_path = None
     text, language = _caption_text(info)
     if text:
         source = "captions"
     else:
+        _, video_path = fetch(url, workdir, subtitles=False)
         text, language = whisper_transcribe(video_path)
         source = "whisper" if text else "none"
 
