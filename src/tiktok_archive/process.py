@@ -69,10 +69,14 @@ def process_video(
         tags = classify.tags_from_hashtags(row["hashtags"])
         vector = embed.embed_one(classify.embedding_text(row["caption"], row["hashtags"], row["transcript"]))
         categories = classify.classify(vector)
+        cfg = get_settings()
+        chunks = classify.chunk_text(row["transcript"], size=cfg.chunk_chars, max_chunks=cfg.chunk_max)
+        chunk_vectors = embed.embed(chunks) if chunks else []
 
         # Stage 4
         with db.connect() as conn:
             db.save_classification(conn, video_id, title=title, categories=categories, tags=tags, embedding=vector)
+            db.replace_chunks(conn, video_id, chunks, chunk_vectors)
         return Result(video_id, "done", row["transcript_source"], categories)
 
     except transcribe.VideoUnavailable as e:

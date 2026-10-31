@@ -1,6 +1,7 @@
-# Optional local Postgres with pgvector, for development.
+# Optional local Postgres with pgvector, for development. Published on port 5433 so it
+# doesn't clash with a native Postgres on the default 5432.
 #   POSTGRES_PASSWORD=... docker compose up -d
-# then in .env:  DATABASE_URL=postgresql://tiktok:<password>@localhost:5432/tiktok_archive
+# then in .env:  DATABASE_URL=postgresql://tiktok:<password>@127.0.0.1:5433/tiktok_archive
 services:
   db:
     image: pgvector/pgvector:pg17
@@ -9,7 +10,7 @@ services:
       POSTGRES_DB: tiktok_archive
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 

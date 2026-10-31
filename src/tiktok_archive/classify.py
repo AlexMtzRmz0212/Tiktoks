@@ -68,6 +68,50 @@ def embedding_text(caption: str | None, hashtags: list[str] | None, transcript: 
     return "\n".join(p for p in parts if p)
 
 
+SENTENCE_END_RE = re.compile(r"(?<=[.!?…])\s+")
+
+
+def chunk_text(text: str | None, *, size: int, overlap: int = 100, max_chunks: int = 8, whole_window: int = TRANSCRIPT_CHARS) -> list[str]:
+    """Split a long transcript into parts of about `size` characters, at sentence ends.
+
+    Neighbouring parts share the last sentence(s) up to `overlap` characters, so an idea that
+    straddles a boundary is whole in one of them. Returns [] when chunking is off (size <= 0) or
+    the text already fits in the whole-video fingerprint, and at most `max_chunks` parts.
+    """
+    text = (text or "").strip()
+    if size <= 0 or len(text) <= whole_window:
+        return []
+    pieces: list[str] = []
+    for sentence in SENTENCE_END_RE.split(text):
+        while len(sentence) > size:  # a run-on with no sentence end: cut it
+            pieces.append(sentence[:size])
+            sentence = sentence[size:]
+        if sentence:
+            pieces.append(sentence)
+
+    chunks: list[str] = []
+    current: list[str] = []
+    length = 0
+    for piece in pieces:
+        if current and length + 1 + len(piece) > size:
+            chunks.append(" ".join(current))
+            if len(chunks) >= max_chunks:
+                return chunks
+            tail: list[str] = []
+            tail_len = 0
+            for earlier in reversed(current):  # carry the last sentence(s) over as overlap
+                if tail_len + len(earlier) > overlap:
+                    break
+                tail.insert(0, earlier)
+                tail_len += len(earlier) + 1
+            current, length = tail, tail_len
+        current.append(piece)
+        length += len(piece) + 1
+    if current and len(chunks) < max_chunks:
+        chunks.append(" ".join(current))
+    return chunks
+
+
 # --- categories -----------------------------------------------------------------
 
 def pick_categories(scores: np.ndarray) -> list[str]:

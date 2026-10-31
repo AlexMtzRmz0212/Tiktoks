@@ -40,6 +40,13 @@ class Settings:
     embedding_model: str
     embedding_device: str
     max_attempts: int
+    related_max: int
+    related_min_similarity: float
+    search_min_similarity: float
+    topic_similarity: float
+    topic_min_size: int
+    chunk_chars: int
+    chunk_max: int
 
 
 @lru_cache(maxsize=1)
@@ -59,6 +66,13 @@ def get_settings() -> Settings:
         embedding_model=_env("EMBEDDING_MODEL", "BAAI/bge-m3"),
         embedding_device=_env("EMBEDDING_DEVICE", "cpu"),
         max_attempts=int(_env("MAX_ATTEMPTS", "3")),
+        related_max=int(_env("RELATED_MAX", "5")),
+        related_min_similarity=float(_env("RELATED_MIN_SIMILARITY", "0.52")),
+        search_min_similarity=float(_env("SEARCH_MIN_SIMILARITY", "0.45")),
+        topic_similarity=float(_env("TOPIC_SIMILARITY", "0.50")),
+        topic_min_size=int(_env("TOPIC_MIN_SIZE", "4")),
+        chunk_chars=int(_env("CHUNK_CHARS", "800")),
+        chunk_max=int(_env("CHUNK_MAX", "8")),
     )
 
 

@@ -57,7 +57,7 @@ Install PyTorch first. The CPU build is enough, because embeddings run on CPU by
 ```
 
 **Postgres with pgvector.** Pick one:
-- Docker: `POSTGRES_PASSWORD=... docker compose up -d` (see `docker-compose.yml`).
+- Docker: `POSTGRES_PASSWORD=... docker compose up -d` (see `docker-compose.yml`; it publishes port 5433 so it doesn't clash with a native Postgres on 5432). Use `127.0.0.1` rather than `localhost` in `DATABASE_URL`: on Windows `localhost` can resolve to IPv6 first and the connection stalls.
 - A hosted Postgres that ships pgvector (Supabase, Neon, and others). This is also the easiest route once this gets deployed.
 - A native install. On Windows, pgvector has to be compiled or installed separately.
 
@@ -66,6 +66,12 @@ Install PyTorch first. The CPU build is enough, because embeddings run on CPU by
 **GPU whisper (optional).** faster-whisper uses CUDA 12 + cuDNN 9 when they are available (`WHISPER_DEVICE=auto`), and falls back to CPU otherwise. `large-v3-turbo` in `int8_float16` fits a 4 GB card.
 
 ## Running
+
+### The web page (easiest way to see what's going on)
+```bash
+.venv/Scripts/python -m tiktok_archive.ui
+```
+Opens `http://127.0.0.1:8765` (only reachable from your own computer). Each of the four steps has a card that says in plain words what it will and won't do, with live numbers from your files and database before anything runs. Buttons start the same commands described below and show their output live, and a results table lists every video with its note, transcript and any error. Nothing runs until you press a button. Docker Desktop and the database container must be running first.
 
 ### Stage 1: export → favorites.csv
 ```bash
@@ -113,12 +119,17 @@ Useful flags:
 ```
 
 ### Searching
+On the page: type in the box at the top of **Results**, pick a type, press Search. Or in a terminal:
 ```bash
 .venv/Scripts/python -m tiktok_archive.search "how to negotiate a raise"
 .venv/Scripts/python -m tiktok_archive.search "quick dinner" --category Food --status unprocessed -k 20
-.venv/Scripts/python -m tiktok_archive.search "automation" --tag python --since 2025-01-01
+.venv/Scripts/python -m tiktok_archive.search "xlookup" --mode keywords
 ```
-Search embeds the query with the same local model and ranks by cosine similarity over each video's caption, hashtags and the start of its transcript, after applying the filters. The scan is exact; add the commented-out HNSW index in the migration once the table passes roughly 50k rows.
+Three types: **meaning** (the query's fingerprint is compared with every video's, so it works across wording and across English and Spanish), **exact words** (the words must appear in the title, caption, hashtags or transcript; quotes, `OR` and `-word` work), and **both** (the default: the two rankings are merged, so a video that ranks well in either list, and best of all in both, comes first). Each result says how it was found.
+
+- Meaning matches scoring below `SEARCH_MIN_SIMILARITY` (default 0.45) are dropped, so a nonsense query returns nothing instead of the least-bad video. On real queries good matches scored about 0.5 to 0.65.
+- Only finished videos are searched. The exact-words side has no stemming (`simple` text search), so "lecture" won't find "lectures"; the meaning side covers that.
+- The first search after starting the page loads the model (15 to 20 seconds, about 2.3 GB of memory); later ones take about a second. The scan is exact; add the commented-out HNSW index in the first migration once the table passes roughly 50k rows.
 
 ## How processing behaves
 
@@ -157,9 +168,28 @@ transcript_source: captions
 # Three Excel tricks for lookups
 @someone · saved 2026-09-21 · [Open on TikTok](…)
 Three Excel tricks for lookups #excel #xlookup
+## Related
+- [[7685551818059009300|Excel formulas you must know]] · shared: #excel
 ## Transcript
 Today I'll show you…
 ```
+
+### Topics
+Step 4 on the page (optional), or `python -m tiktok_archive.topics`. It groups all finished videos whose fingerprints are close (average-linkage clustering on cosine distance) and names each group after the hashtags that set it apart from the rest of your archive (a tag's score is how many of the group's videos have it times how rare it is overall, so `fyp` never wins). A group needs `TOPIC_MIN_SIZE` videos (default 4) and members must be on average `TOPIC_SIMILARITY` alike (default 0.50, between the 0.59 to 0.67 measured for same-topic videos and the 0.38 to 0.46 for unrelated ones). Run it with `--preview`, or press "Show the topics it would make" on the page, to see the result before anything is saved.
+
+Step 5 then adds `topic: <name>` and a `Topic: [[...]]` link to each note, and writes one hub note per topic to `<vault>/_Topics/`, listing its videos with the most typical first. The export only touches files in `_Topics/` that carry the `tiktok_archive_topic: true` property, so anything else you put there is safe. Topics are rebuilt from scratch every time (hubs of topics that no longer exist are deleted), so run steps 4 and 5 again after processing more videos. The thresholds need a real archive to tune: with a handful of videos nothing groups, which is correct.
+
+### Long videos are matched by part
+A video's main fingerprint covers its caption, hashtags and the first ~2,000 characters of the transcript. When the transcript is longer than that, it is also cut into parts of about `CHUNK_CHARS` (default 800) at sentence ends, up to `CHUNK_MAX` parts (default 8, so roughly the first 6,400 characters), and each part gets its own fingerprint. Search then scores a video by its best part, and the results page says which part matched ("part 2 of its transcript"). Example: a video about remote work with a few sentences about a workout scores 0.34 against a fitness query on its main fingerprint alone, and 0.59 once its parts are included.
+
+Videos that fit in the main fingerprint (most captions-only TikToks) get no parts and cost nothing extra. Embedding takes about 0.5 seconds per part on CPU, so a long video adds up to about 4 seconds. Related links, categories and topics keep using the main fingerprint. Set `CHUNK_CHARS=0` to turn it off; parts of videos processed earlier appear when you reprocess them (`run_pipeline.py --reprocess --ids ...`, free).
+
+### Links between notes
+Every note ends up linked to the videos closest to it in meaning. When a note is written, the database is asked for the finished videos whose search fingerprint (the bge-m3 vector of caption, hashtags and the start of the transcript) is most similar. Up to `RELATED_MAX` of them (default 5) that score at least `RELATED_MIN_SIMILARITY` (default 0.52) become `[[links]]` in the **Related** section, with the hashtags the two videos share. Obsidian then draws them in its graph and shows them as backlinks, so videos about the same idea connect even when their tags differ, and across English and Spanish.
+
+- **Where 0.52 comes from:** with this model, videos on the same subject score about 0.59 to 0.67 and unrelated ones about 0.38 to 0.46, so 0.52 sits in the gap. Lower it in `.env` for more links, raise it for fewer, closer ones. Check it again after a big run, because real captions are messier than test sentences.
+- **Only finished videos are linked**, and a note's links reflect what was in the database when it was written. After processing more videos, run step 5 again (or `run_pipeline.py --only-export`) so older notes pick up their new neighbours. Notes whose links didn't change aren't rewritten.
+- **Text only:** a video with a bare caption and no speech has little to match on and gets few or no links.
 
 Re-exporting updates notes in place. When a video's primary category changes, its note moves to the new folder. Files are only rewritten when their content changes. Only `<video_id>.md` files for videos in the database are ever touched, so your own notes in the same vault are safe. `aliases` lets Obsidian's quick switcher find notes by title.
 

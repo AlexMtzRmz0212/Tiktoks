@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TikTok archive</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #656d76; --line: #e2e0d9;
+    --accent: #0b6e4f; --accent-ink: #ffffff; --warn: #9a5b00; --warn-bg: #fff4de;
+    --bad: #b42318; --bad-bg: #fdecea; --ok-bg: #e4f4ec; --code-bg: #14181d; --code-ink: #d7dde4;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111315; --panel: #1a1d20; --ink: #e6e8ea; --muted: #9aa3ac; --line: #2c3136;
+      --accent: #3fbf91; --accent-ink: #08140f; --warn: #f0b95b; --warn-bg: #2b2210;
+      --bad: #ff8a80; --bad-bg: #2d1614; --ok-bg: #14271f; --code-bg: #0b0d0f; --code-ink: #cdd5dc;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 80px; }
+  h1 { font-size: 21px; margin: 0; }
+  h2 { font-size: 17px; margin: 0; }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 14px; }
+  .sub { color: var(--muted); margin: 0; font-size: 14px; }
+  .muted { color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; font-size: 12px; display: inline-block; }
+  .chip.ok { background: var(--ok-bg); } .chip.bad { background: var(--bad-bg); color: var(--bad); }
+
+  /* the deck: controls | display | readouts */
+  .deck { display: grid; grid-template-columns: 290px minmax(0, 1fr) 250px; gap: 14px; align-items: start; }
+  .controls { order: 1; display: grid; gap: 10px; }
+  .display { order: 2; border-color: var(--accent); border-width: 2px; padding: 0; overflow: hidden; }
+  .readouts { order: 3; display: grid; gap: 10px; }
+  @media (max-width: 1000px) {
+    .deck { grid-template-columns: 1fr; }
+    .display { order: 1; } .controls { order: 2; } .readouts { order: 3; }
+  }
+
+  /* controls */
+  .ctl { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0; overflow: hidden; }
+  .ctl.selected { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+  .ctl.running { border-color: var(--accent); background: var(--ok-bg); }
+  .ctl-head { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; border: 0; background: none; padding: 10px 12px; border-radius: 0; }
+  .ctl-head strong { display: block; line-height: 1.25; }
+  .ctl-head small { color: var(--muted); font-size: 13px; }
+  .ctl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 12px 12px; }
+  .ctl-actions button.primary { flex: 1; }
+  .num { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .ctl.idle-step .num { background: var(--muted); }
+  label.opt { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+
+  /* display */
+  .screen-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
+  .screen-head h2 { flex: 1; min-width: 160px; }
+  .screen-body { padding: 14px 16px 16px; }
+  .track { height: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+  .fill { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+  .track.indeterminate .fill { width: 35%; animation: slide 1.4s ease-in-out infinite alternate; }
+  @keyframes slide { from { margin-left: 0; } to { margin-left: 65%; } }
+  .progressline { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; font-size: 14px; }
+  ul.latest { list-style: none; padding: 0; margin: 12px 0 0; font-size: 14px; min-height: 3.2em; }
+  ul.latest li { margin: 2px 0; padding-left: 14px; position: relative; word-break: break-word; }
+  ul.latest li::before { content: ""; position: absolute; left: 0; top: .6em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  ul.latest li.bad::before { background: var(--bad); }
+  details { margin-top: 10px; } summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .log { background: var(--code-bg); color: var(--code-ink); border-radius: var(--radius); padding: 12px 14px; font: 13px/1.45 ui-monospace, Consolas, monospace; height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
+  code { background: var(--bg); padding: 2px 8px; border-radius: 6px; font-size: 13px; word-break: break-all; }
+  .about { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 14px; }
+  .about p.what { color: var(--muted); margin: 4px 0 12px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+  ul { margin: 0; padding-left: 18px; } li { margin: 2px 0; }
+  ul.wont li::marker { color: var(--bad); } ul.will li::marker { color: var(--accent); }
+  dl.facts { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; }
+  dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 12px; margin-top: 12px; font-size: 14px; }
+  .blockmsg { background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 8px 12px; margin-top: 12px; font-size: 14px; }
+  .setup { margin-bottom: 14px; }
+
+  /* readouts */
+  .readouts h3 { margin-bottom: 8px; }
+  .read { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 14px; margin: 0; }
+  .read dt { color: var(--muted); } .read dd { margin: 0; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .read dd.path { font-weight: 400; font-size: 12px; grid-column: 1 / -1; text-align: left; color: var(--muted); margin-bottom: 4px; }
+
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 7px 14px; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--bad); border-color: var(--bad); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.link { border: 0; background: none; color: var(--muted); padding: 0; text-decoration: underline; font-size: 13px; }
+  input, select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  input[type=number] { width: 70px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; border: 1px solid var(--line); }
+  .pill.done { background: var(--ok-bg); } .pill.failed, .pill.unavailable { background: var(--bad-bg); color: var(--bad); }
+
+  /* results */
+  .results { margin-top: 14px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr { cursor: pointer; } tbody tr:hover { background: var(--bg); }
+  .tablewrap { overflow-x: auto; }
+  .pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  #detail { position: fixed; inset: 0 0 0 auto; width: min(560px, 100%); background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.15); padding: 18px; overflow: auto; transform: translateX(100%); transition: transform .18s; z-index: 5; }
+  #detail.open { transform: none; }
+  #detail pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); border-radius: 8px; padding: 12px; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+  #detail a { color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { #detail, .fill { transition: none; } .track.indeterminate .fill { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <h1>TikTok archive</h1>
+    <p class="sub">Nothing runs until you press a button on the left. The screen in the middle shows what is happening.</p>
+  </div>
+  <div id="setup" class="setup"></div>
+
+  <div class="deck">
+    <nav class="controls" id="controls" aria-label="Steps"></nav>
+
+    <section class="panel display" aria-label="Display">
+      <div class="screen-head">
+        <h2 id="nowtitle">Nothing running</h2>
+        <span class="pill" id="jobstate">idle</span>
+        <button class="danger" id="stopbtn" disabled>Stop</button>
+      </div>
+      <div class="screen-body">
+        <p class="muted" id="nowsub" style="margin:0">Press Run on a step to start it. What it is doing shows up here.</p>
+        <div id="progresswrap" hidden>
+          <div class="track" aria-hidden="true"><div class="fill" id="fill"></div></div>
+          <div class="progressline"><strong id="progtext"></strong><span class="muted" id="progtime"></span></div>
+        </div>
+        <ul class="latest" id="latest" aria-live="polite"></ul>
+        <details>
+          <summary>Full output and exact command</summary>
+          <div class="muted" style="margin-top:6px">Command: <code id="jobcmd">none yet</code></div>
+          <pre class="log" id="log"></pre>
+        </details>
+        <div class="muted" style="margin-top:8px;font-size:13px">Stopping is safe: finished work is already saved, and the next run continues where this one left off.</div>
+        <div class="about" id="about"></div>
+      </div>
+    </section>
+
+    <aside class="readouts" id="readouts" aria-label="Status"></aside>
+  </div>
+
+  <section class="panel results">
+    <h2>Results</h2>
+    <p class="muted" style="margin:4px 0 0">Everything in the database. Click a row to see its note, its transcript and, if something went wrong, why.</p>
+    <form class="filters" id="searchform" role="search">
+      <input id="q" type="search" placeholder="Search by idea or words, e.g. how to ask for a raise" aria-label="Search" style="flex:1;min-width:220px">
+      <select id="mode" aria-label="Search type">
+        <option value="both">Meaning + words</option>
+        <option value="meaning">Meaning only</option>
+        <option value="keywords">Exact words only</option>
+      </select>
+      <button class="primary" type="submit">Search</button>
+      <button type="button" id="clearsearch" hidden>Clear</button>
+    </form>
+    <p class="muted" id="searchnote" style="margin:0 0 4px;font-size:13px" hidden></p>
+    <div class="filters">
+      <select id="f-state" aria-label="State"><option value="">Any state</option></select>
+      <select id="f-cat" aria-label="Category"><option value="">Any category</option></select>
+      <select id="f-status" aria-label="Review status"><option value="">Any review status</option><option value="unprocessed">Not reviewed</option><option value="noted">Noted</option></select>
+    </div>
+    <div class="tablewrap"><table><thead><tr><th>Title</th><th>Creator</th><th>Categories</th><th>Words from</th><th>State</th><th>Saved</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div class="tablewrap" id="hitswrap" hidden><table><thead><tr><th>Title</th><th>Creator</th><th>Categories</th><th>Found by</th><th>Meaning match</th><th>Saved</th></tr></thead><tbody id="hits"></tbody></table></div>
+    <div class="pager" id="pager"><button id="prev">Previous</button><span id="pageinfo" class="muted"></span><button id="next">Next</button></div>
+  </section>
+</main>
+
+<aside id="detail" aria-label="Video details"></aside>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (id) => document.getElementById(id);
+const PAGE = 50;
+let offset = 0, logNext = 0, lastRunning = false, status = null, previews = {}, currentJob = {};
+let selected = "stage1", userPicked = false, procOpts = { limit: 5, workers: 4 };
+
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return el;
+}
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "X-UI-Token": TOKEN, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+const fmt = (n) => (typeof n === "number" ? n.toLocaleString() : n);
+
+const STAGES = [
+  { id: "stage1", title: "Read your TikTok export", what: "Your export lists each saved video as a short link. This finds the real address of each one and writes the list to a spreadsheet file." },
+  { id: "load", title: "Add videos to the database", what: "Copies that list into the database, one row per video. At this point a row only has its link; nothing has been read from the video." },
+  { id: "process", title: "Read and label each video", what: "The main work. Get the words of each video (its captions, or Whisper listening to it), then label it: a title, tags and categories. All of it happens on your computer." },
+  { id: "topics", title: "Group videos into topics", optional: true, what: "Optional. Looks at all finished videos at once and groups the ones about the same theme (for example \"remote work\" or \"piano\"). Step 5 then writes one hub note per topic in Obsidian and links every note to its topic." },
+  { id: "export", title: "Write the Obsidian notes", what: "Turns what is in the database into one Markdown note per video, filed in a folder per category." },
+];
+const STAGE_NAMES = {
+  stage1: "Step 1: Read your TikTok export", load: "Step 2: Add videos to the database",
+  process: "Step 3: Read and label each video", topics: "Step 4: Group videos into topics (optional)",
+  export: "Step 5: Write the Obsidian notes", migrate: "Create the database tables",
+};
+const jobRunning = () => !!currentJob.running;
+
+/* ---------- left: controls ---------- */
+function renderControls() {
+  const box = $("controls"); box.replaceChildren();
+  STAGES.forEach((st, i) => {
+    const p = previews[st.id];
+    const running = jobRunning() && currentJob.stage === st.id;
+    const blocked = !p || p.error || p.blocked;
+    const dbDown = !status.db.ok && st.id !== "stage1";
+    const sum = running ? "running now" : !p ? "checking…" : p.error ? "can't check" : p.summary || (p.blocked ? "nothing to do" : "");
+    const ctl = h("div", { class: "ctl" + (selected === st.id ? " selected" : "") + (running ? " running" : "") + (blocked ? " idle-step" : "") });
+    ctl.append(h("button", { class: "ctl-head", "aria-pressed": selected === st.id, onclick: () => { selected = st.id; userPicked = true; renderControls(); renderAbout(); } },
+      h("span", { class: "num" }, i + 1), h("span", {}, h("strong", {}, st.title), h("small", {}, sum))));
+    const actions = h("div", { class: "ctl-actions" });
+    if (st.id === "process") {
+      actions.append(
+        h("label", { class: "opt" }, "How many", h("input", { type: "number", min: 1, value: procOpts.limit, "aria-label": "How many videos", oninput: (e) => { procOpts.limit = +e.target.value; } })),
+        h("label", { class: "opt" }, "At once", h("input", { type: "number", min: 1, max: 8, value: procOpts.workers, "aria-label": "Videos at once", oninput: (e) => { procOpts.workers = +e.target.value; } })));
+    }
+    actions.append(h("button", { class: "primary", disabled: !!blocked || dbDown || jobRunning(),
+      onclick: () => run(st.id, st.id === "process" ? { ...procOpts } : undefined) }, "Run"));
+    ctl.append(actions);
+    box.append(ctl);
+  });
+}
+
+/* ---------- middle bottom: about the selected step ---------- */
+function renderAbout() {
+  const box = $("about"); box.replaceChildren();
+  const i = STAGES.findIndex((s) => s.id === selected), st = STAGES[i], p = previews[selected];
+  box.append(h("div", { style: "display:flex;gap:10px;align-items:center" }, h("span", { class: "num" }, i + 1), h("h2", {}, "About step " + (i + 1) + ": " + st.title),
+    h("button", { class: "link", onclick: () => loadPreview(selected) }, "refresh numbers")));
+  box.append(h("p", { class: "what" }, st.what));
+  if (!p) { box.append(h("p", { class: "muted" }, "Checking…")); return; }
+  if (p.error) { box.append(h("div", { class: "blockmsg" }, p.error)); return; }
+  const cols = h("div", { class: "cols" });
+  if (p.facts.length) cols.append(h("div", {}, h("h3", {}, "Right now"), h("dl", { class: "facts" }, p.facts.map(([k, v]) => [h("dt", {}, k), h("dd", {}, fmt(v))]))));
+  if (p.will.length) cols.append(h("div", {}, h("h3", {}, "What it will do"), h("ul", { class: "will" }, p.will.map((t) => h("li", {}, t)))));
+  if (p.wont.length) cols.append(h("div", {}, h("h3", {}, "What it won't do"), h("ul", { class: "wont" }, p.wont.map((t) => h("li", {}, t)))));
+  box.append(cols);
+  if (p.items) box.append(h("div", { style: "margin-top:12px" }, h("h3", {}, p.items_title || "Preview"),
+    p.items.length ? h("ul", { class: "will" }, p.items.map((t) => h("li", {}, t))) : h("p", { class: "muted" }, "Nothing is similar enough to group at the current setting.")));
+  if (st.id === "topics" && !p.items && !p.blocked) box.append(h("div", { class: "actions", style: "margin-top:12px" },
+    h("button", { onclick: () => loadPreview("topics", true) }, "Show the topics it would make")));
+  if (p.note) box.append(h("div", { class: "note" }, p.note));
+  if (p.blocked) box.append(h("div", { class: "blockmsg" }, p.blocked));
+}
+
+/* ---------- right: readouts ---------- */
+function renderReadouts() {
+  const box = $("readouts"); box.replaceChildren();
+  const db = status.db, f = status.files, c = status.config;
+  const counts = db.counts || {};
+  box.append(h("section", { class: "panel" }, h("h3", {}, "Database"),
+    h("span", { class: "chip " + (db.ok ? "ok" : "bad") }, db.ok ? "connected" : "not reachable"),
+    db.ok ? h("dl", { class: "read", style: "margin-top:8px" }, ["done", "pending", "transcribed", "failed", "unavailable"].map((s) => [h("dt", {}, s), h("dd", {}, fmt(counts[s] || 0))]))
+          : h("p", { class: "muted", style: "font-size:13px;margin:8px 0 0" }, db.error || "")));
+  box.append(h("section", { class: "panel" }, h("h3", {}, "Files"),
+    h("dl", { class: "read" },
+      h("dt", {}, "In export file"), h("dd", {}, f.export_json.exists ? "found" : "missing"),
+      h("dt", {}, "In favorites.csv"), h("dd", {}, fmt(f.favorites_csv.rows)),
+      h("dt", {}, "Obsidian folder"), h("dd", {}, f.vault.exists ? "exists" : "not yet"),
+      h("dd", { class: "path" }, f.vault.path))));
+  box.append(h("section", { class: "panel" }, h("h3", {}, "How it reads videos"),
+    h("dl", { class: "read" },
+      h("dt", {}, "Captions in"), h("dd", {}, c.caption_langs.join(", ")),
+      h("dt", {}, "Whisper model"), h("dd", {}, c.whisper_model),
+      h("dt", {}, "Search model"), h("dd", {}, c.embedding_model),
+      h("dt", {}, "Retries"), h("dd", {}, c.max_attempts))));
+}
+
+function renderSetup() {
+  const box = $("setup"); box.replaceChildren();
+  const db = status.db;
+  if (!db.ok) {
+    box.append(h("div", { class: "panel" }, h("h2", {}, "The database isn't reachable"),
+      h("p", { class: "muted", style: "margin:4px 0" }, db.error || ""),
+      h("p", { style: "margin:4px 0 0" }, "Open Docker Desktop and start the container named tiktoks-db-1 (play button in the Containers tab), then reload this page.")));
+  } else if (db.migrated && db.pending_migrations > 0) {
+    box.append(h("div", { class: "panel" }, h("h2", {}, "The database needs an update"),
+      h("p", { class: "muted", style: "margin:4px 0 8px" }, `${db.pending_migrations} new change${db.pending_migrations === 1 ? "" : "s"} to the database (for example search or topics). They only add things; nothing already saved is changed or removed.`),
+      h("button", { class: "primary", disabled: jobRunning(), onclick: () => run("migrate") }, "Update the database")));
+  } else if (!db.migrated) {
+    box.append(h("div", { class: "panel" }, h("h2", {}, "The database is empty"),
+      h("p", { class: "muted", style: "margin:4px 0 8px" }, "Create the tables the pipeline needs (a videos table and the search extension). Safe to repeat."),
+      h("button", { class: "primary", disabled: jobRunning(), onclick: () => run("migrate") }, "Create the tables")));
+  }
+}
+
+async function loadPreview(id, full) {
+  previews[id] = undefined; renderControls(); renderAbout();
+  try { previews[id] = await api("/api/preview/" + id + (full ? "?full=1" : "")); } catch (e) { previews[id] = { error: e.message }; }
+  renderControls(); renderAbout();
+}
+async function loadAllPreviews() {
+  await Promise.all(STAGES.map((s) => loadPreview(s.id)));
+  if (!userPicked) { const first = STAGES.find((s) => previews[s.id] && !previews[s.id].blocked && !previews[s.id].error); if (first) { selected = first.id; renderControls(); renderAbout(); } }
+}
+
+async function loadStatus() {
+  status = await api("/api/status");
+  renderSetup(); renderReadouts();
+  const stateSel = $("f-state"), catSel = $("f-cat");
+  if (stateSel.options.length === 1) ["done", "pending", "transcribed", "failed", "unavailable"].forEach((s) => stateSel.append(h("option", { value: s }, s)));
+  if (catSel.options.length === 1) status.categories.forEach((c) => catSel.append(h("option", { value: c }, c)));
+}
+
+/* ---------- middle top: the display ---------- */
+let progress = { done: 0, total: 0 }, recent = [];
+function resetRun() { logNext = 0; progress = { done: 0, total: 0 }; recent = []; $("log").textContent = ""; }
+
+// Turn one raw output line into a sentence for the "latest" list, and keep the progress counters up to date.
+function digest(raw) {
+  const line = raw.replace(/^\d\d:\d\d:\d\d\s+\w+\s+/, "").trim();
+  let m;
+  if ((m = line.match(/^\.\.\.(\d+)\/(\d+)/))) { progress = { done: +m[1], total: +m[2] }; return null; }
+  if ((m = line.match(/(\d+) already resolved on a previous run, (\d+) to go/))) { progress.total = +m[2]; return { text: `${fmt(+m[2])} links to resolve (${fmt(+m[1])} were done on an earlier run)` }; }
+  if ((m = line.match(/^processing (\d+) videos/))) { progress.total = +m[1]; return { text: line }; }
+  if ((m = line.match(/^\[(\d+)\/(\d+)\] (\d+) (done|already done|unavailable|failed)\s*(.*)$/))) {
+    progress = { done: +m[1], total: +m[2] };
+    const [, , , id, what, rest] = m;
+    if (what === "done") { const [src, ...cats] = rest.split(/\s{2,}/); return { text: `Video ${id}: done. Words from ${src}${cats.length ? "; filed under " + cats.join(" ") : ""}` }; }
+    if (what === "already done") return { text: `Video ${id}: already done earlier, skipped` };
+    if (what === "unavailable") return { text: `Video ${id}: deleted or private, skipped`, bad: true };
+    return { text: `Video ${id}: failed. ${rest}`, bad: true };
+  }
+  return line ? { text: line } : null;
+}
+
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : m ? `${m} min ${s} s` : `${s} s`;
+}
+
+function renderNow(j) {
+  const idle = !j.stage;
+  const name = STAGE_NAMES[j.stage] || j.stage || "";
+  const pill = $("jobstate"); pill.className = "pill";
+  let title = name, sub = "";
+  if (idle) { title = "Nothing running"; sub = "Press Run on a step to start it. What it is doing shows up here."; pill.textContent = "idle"; }
+  else if (j.running) { sub = "Running now. You can leave this page open; the work happens on your computer."; pill.textContent = "running"; }
+  else if (j.stopped) { sub = "Stopped. Everything finished before that is saved; run it again to continue."; pill.textContent = "stopped"; }
+  else if (j.exit_code === 0) { sub = "Finished. The numbers on the left and right have been refreshed."; pill.textContent = "finished"; pill.classList.add("done"); }
+  else { sub = "It ended with an error (code " + j.exit_code + "). The last lines below say why."; pill.textContent = "error"; pill.classList.add("failed"); }
+  $("nowtitle").textContent = title;
+  $("nowsub").textContent = sub;
+
+  const wrap = $("progresswrap"), track = wrap.querySelector(".track");
+  wrap.hidden = idle;
+  if (!idle) {
+    const elapsed = (j.finished || Date.now() / 1000) - j.started;
+    const known = progress.total > 0;
+    const finishedOk = !j.running && j.exit_code === 0 && !j.stopped;
+    track.classList.toggle("indeterminate", j.running && !known);
+    $("fill").style.width = finishedOk ? "100%" : known ? Math.min(100, (progress.done / progress.total) * 100) + "%" : j.running ? "" : "0%";
+    let text = known ? `${fmt(progress.done)} of ${fmt(progress.total)}` : j.running ? "working…" : "";
+    if (finishedOk && known) text = `${fmt(progress.total)} of ${fmt(progress.total)}`;
+    let time = `${fmtDuration(elapsed)} elapsed`;
+    if (j.running && known && progress.done > 0 && progress.done < progress.total) time += `, about ${fmtDuration(elapsed / progress.done * (progress.total - progress.done))} left`;
+    $("progtext").textContent = text;
+    $("progtime").textContent = time;
+  }
+  $("latest").replaceChildren(...recent.slice(-6).map((r) => h("li", { class: r.bad ? "bad" : "" }, r.text)));
+}
+
+async function run(stage, opts) {
+  try { await api("/api/run", { stage, ...(opts || {}) }); resetRun(); await pollJob(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  catch (e) { alert(e.message); }
+}
+$("stopbtn").addEventListener("click", async () => { if (confirm("Stop what's running? Work already saved is kept.")) await api("/api/stop", {}); });
+
+async function pollJob() {
+  let j;
+  try { j = await api("/api/job?since=" + logNext); } catch { return; }
+  currentJob = j;
+  const log = $("log"), atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  if (j.lines.length) {
+    log.append(document.createTextNode(j.lines.join("\n") + "\n")); if (atBottom) log.scrollTop = log.scrollHeight;
+    for (const l of j.lines) { const d = digest(l); if (d) recent.push(d); }
+    if (recent.length > 50) recent = recent.slice(-50);
+  }
+  logNext = j.next;
+  $("jobcmd").textContent = j.command || "none yet";
+  $("stopbtn").disabled = !j.running;
+  renderNow(j);
+  if (lastRunning !== j.running) {
+    lastRunning = j.running;
+    if (!j.running) { await loadStatus(); await loadAllPreviews(); await loadRows(); } else renderControls();
+    renderSetup();
+  }
+}
+
+/* ---------- bottom: results ---------- */
+async function loadRows() {
+  const params = new URLSearchParams({ limit: PAGE, offset });
+  for (const [k, id] of [["state", "f-state"], ["category", "f-cat"], ["status", "f-status"]]) if ($(id).value) params.set(k, $(id).value);
+  const body = $("rows"); body.replaceChildren();
+  let data;
+  try { data = await api("/api/videos?" + params); } catch (e) { body.append(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "Can't read the database yet (" + e.message + ")."))); return; }
+  if (!data.rows.length) body.append(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "No videos match.")));
+  for (const r of data.rows) {
+    body.append(h("tr", { onclick: () => openDetail(r.video_id), tabindex: 0, onkeydown: (e) => { if (e.key === "Enter") openDetail(r.video_id); } },
+      h("td", {}, r.title || h("span", { class: "muted" }, "TikTok " + r.video_id)),
+      h("td", {}, r.username ? "@" + r.username : ""),
+      h("td", {}, (r.categories || []).join(", ")),
+      h("td", {}, r.transcript_source || ""),
+      h("td", {}, h("span", { class: "pill " + r.processing_state }, r.processing_state), r.status === "noted" ? " ✓ noted" : ""),
+      h("td", {}, r.date_saved ? r.date_saved.slice(0, 10) : "")));
+  }
+  const from = data.total ? offset + 1 : 0, to = Math.min(offset + PAGE, data.total);
+  $("pageinfo").textContent = `${from}-${to} of ${fmt(data.total)}`;
+  $("prev").disabled = offset === 0; $("next").disabled = offset + PAGE >= data.total;
+}
+$("prev").onclick = () => { offset = Math.max(0, offset - PAGE); loadRows(); };
+$("next").onclick = () => { offset += PAGE; loadRows(); };
+let timer; for (const id of ["f-state", "f-cat", "f-status"]) $(id).addEventListener("input", () => {
+  clearTimeout(timer);
+  timer = setTimeout(() => { offset = 0; if ($("q").value.trim()) runSearch(); else loadRows(); }, 250);
+});
+
+/* search by meaning, words, or both */
+function showSearchMode(on) {
+  $("hitswrap").hidden = !on; $("pager").hidden = on; $("clearsearch").hidden = !on;
+  document.querySelector(".results .tablewrap:not(#hitswrap)").hidden = on;
+  $("f-state").disabled = on; $("searchnote").hidden = !on;
+}
+async function runSearch() {
+  const q = $("q").value.trim();
+  if (!q) { showSearchMode(false); return loadRows(); }
+  showSearchMode(true);
+  const note = $("searchnote"), body = $("hits"); body.replaceChildren();
+  note.textContent = "Searching… the first search after starting the page loads the search model, which takes 15 to 20 seconds. Later searches take about a second.";
+  const params = new URLSearchParams({ q, mode: $("mode").value, limit: 20 });
+  for (const [k, id] of [["category", "f-cat"], ["status", "f-status"]]) if ($(id).value) params.set(k, $(id).value);
+  let data;
+  try { data = await api("/api/search?" + params); } catch (e) { note.textContent = "Search failed: " + e.message; return; }
+  note.textContent = `${data.rows.length} result${data.rows.length === 1 ? "" : "s"} in ${data.seconds} s` + (data.loaded_model ? " (including loading the search model)" : "")
+    + `. Only finished videos are searched. Meaning matches below ${data.min_similarity} are left out.`;
+  if (!data.rows.length) body.append(h("tr", {}, h("td", { colspan: 6, class: "muted" }, "Nothing matches. Try other words, or switch the type to \"Meaning only\".")));
+  const labels = { both: "meaning + words", meaning: "meaning", keywords: "exact words" };
+  for (const r of data.rows) {
+    body.append(h("tr", { onclick: () => openDetail(r.video_id), tabindex: 0, onkeydown: (e) => { if (e.key === "Enter") openDetail(r.video_id); } },
+      h("td", {}, r.title || h("span", { class: "muted" }, "TikTok " + r.video_id)),
+      h("td", {}, r.username ? "@" + r.username : ""),
+      h("td", {}, (r.categories || []).join(", ")),
+      h("td", {}, labels[r.matched] || r.matched),
+      h("td", {}, r.similarity == null ? "—" : r.similarity.toFixed(2) + (r.part ? ` (part ${r.part} of its transcript)` : "")),
+      h("td", {}, r.date_saved ? r.date_saved.slice(0, 10) : "")));
+  }
+}
+$("searchform").addEventListener("submit", (e) => { e.preventDefault(); runSearch(); });
+$("clearsearch").addEventListener("click", () => { $("q").value = ""; runSearch(); });
+$("mode").addEventListener("change", () => { if ($("q").value.trim()) runSearch(); });
+
+async function openDetail(id) {
+  const d = $("detail"); d.replaceChildren(h("p", { class: "muted" }, "Loading…")); d.classList.add("open");
+  try {
+    const v = await api("/api/video/" + id);
+    const noted = v.status === "noted";
+    d.replaceChildren(
+      h("div", { style: "display:flex;gap:12px;align-items:center;margin-bottom:10px" }, h("button", { onclick: () => d.classList.remove("open") }, "Close"),
+        h("a", { href: v.canonical_url, target: "_blank", rel: "noopener noreferrer" }, "Open on TikTok")),
+      h("h2", {}, v.title || "TikTok " + v.video_id),
+      h("p", { class: "muted" }, `${v.processing_state} · words from: ${v.transcript_source || "not yet"} · categories: ${(v.categories || []).join(", ") || "none yet"}`),
+      v.last_error ? h("div", { class: "blockmsg" }, `Attempt ${v.attempts}: ${v.last_error}`) : null,
+      v.processing_state === "done" ? h("div", { style: "display:flex;gap:12px;align-items:center;margin:10px 0" },
+        h("button", { onclick: async () => { try { await api("/api/mark", { ids: [v.video_id], noted: !noted }); await openDetail(id); await loadRows(); } catch (e) { alert(e.message); } } },
+          noted ? "Mark as not reviewed" : "Mark as noted"),
+        h("span", { class: "muted" }, "Also rewrites this video's note file.")) : null,
+      h("h3", {}, "Its Obsidian note" + (v.note_path ? " — " + v.note_path : "")),
+      h("pre", {}, v.note));
+  } catch (e) { d.replaceChildren(h("button", { onclick: () => d.classList.remove("open") }, "Close"), h("div", { class: "blockmsg" }, e.message)); }
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("detail").classList.remove("open"); });
+
+(async () => {
+  await loadStatus(); renderControls(); renderAbout(); await pollJob(); await loadAllPreviews(); await loadRows();
+  setInterval(pollJob, 1000);
+})();
+</script>
+</body>
+</html>

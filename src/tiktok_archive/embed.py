@@ -30,6 +30,11 @@ def _get_model():
     return _model
 
 
+def is_loaded() -> bool:
+    """Whether the model is already in memory (the first use takes several seconds)."""
+    return _model is not None
+
+
 def embed(texts: list[str]) -> list[np.ndarray]:
     with _lock:
         vectors = _get_model().encode(texts, normalize_embeddings=True, convert_to_numpy=True)

@@ -54,7 +54,26 @@ def find_favorite_entries(root: Path):
     return entries
 
 
+SHARE_ID_RE = re.compile(r"^https?://[\w.\-]+/share/video/(\d+)")
+
+
+def id_from_link(link: str) -> str | None:
+    """The video id, when the export's share link already contains it (no network needed)."""
+    m = SHARE_ID_RE.match(link or "")
+    return m.group(1) if m else None
+
+
 def resolve_link(link: str, session: requests.Session, retries: int = 3):
+    """Return (canonical_url, video_id, username). username is None when it isn't known yet.
+
+    The export's usual links (tiktokv.com/share/video/<id>/) carry the id, so no request is
+    made: TikTok answers plain web requests with "403 Access Denied", and yt-dlp, which
+    Stage 2 uses, accepts an address without a username (it learns the username from the post).
+    Other link shapes (short links) are followed over the network.
+    """
+    video_id = id_from_link(link)
+    if video_id:
+        return f"https://www.tiktok.com/@/video/{video_id}", video_id, None
     for attempt in range(retries):
         try:
             resp = session.get(link, allow_redirects=True, timeout=10)

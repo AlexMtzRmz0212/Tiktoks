@@ -43,3 +43,16 @@ def test_read_favorites_rejects_wrong_columns(tmp_path):
     csv_path.write_text("Link,Date\nx,y\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         read_favorites(csv_path)
+
+
+def test_video_id_is_read_from_share_link_without_network():
+    from tiktok_archive.parse_tiktok_export import id_from_link, resolve_link
+
+    link = "https://www.tiktokv.com/share/video/7688047916308499744/"
+    assert id_from_link(link) == "7688047916308499744"
+    assert id_from_link("https://vm.tiktok.com/ZMabc123/") is None
+    assert id_from_link(None) is None
+    # session=None proves no request is made for this shape of link
+    assert resolve_link(link, None) == (
+        "https://www.tiktok.com/@/video/7688047916308499744", "7688047916308499744", None,
+    )
